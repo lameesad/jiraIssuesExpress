@@ -7,11 +7,36 @@ const catchAsync = require('../utils/catchAsync');
 const hellojira = catchAsync(async (req, res) => {
 
 
-  let response = await fetch('https://lamees.atlassian.net/rest/api/2/search?jql=project=lameesProject', {
+  let response = await fetch('https://lamees.atlassian.net/rest/api/2/search?jql=project=lameesProject&orderBy=created', {
     method: 'GET',
     headers: { 'Authorization': 'Basic ' + Buffer.from(req.username + ":" + req.password).toString('base64') }
   });
   let data = await response.json();
+  var user = new Map();
+  data.issues.forEach(element => {
+    let accountId = element.fields.assignee.accountId;
+    let created = element.fields.created;
+    let count = user.get(accountId)?.count;
+    let lastCreated = user.get(accountId)?.lastCreated
+    if (count == null) {
+      count = 0;
+    }
+    if (lastCreated == null) {
+      lastCreated = created
+    }
+
+    // { count: count + 1, issueDate: data.issues[0].fields.created }
+
+    // if (created > lastCreated) {
+    //   lastCreated = created;
+    //   console.log("condition", created, lastCreated)
+    // }
+
+    user.set(accountId, { count: count + 1, latestDate: lastCreated })
+  });
+
+  console.log(user)
+
   res.send(data)
 
 });
