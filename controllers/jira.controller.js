@@ -7,7 +7,7 @@ const catchAsync = require('../utils/catchAsync');
 const hellojira = catchAsync(async (req, res) => {
 
 
-  let response = await fetch('https://lamees.atlassian.net/rest/api/2/search?jql=project=lameesProject&orderBy=created', {
+  let response = await fetch('https://lamees.atlassian.net/rest/api/2/search?jql=project=lameesProject&orderBy=created DECS', {
     method: 'GET',
     headers: { 'Authorization': 'Basic ' + Buffer.from(req.username + ":" + req.password).toString('base64') }
   });
@@ -15,24 +15,26 @@ const hellojira = catchAsync(async (req, res) => {
   var user = new Map();
   data.issues.forEach(element => {
     let accountId = element.fields.assignee.accountId;
-    let created = element.fields.created;
+    let created = element.fields.created
+    let updated = element.fields.updated
+    let issueID = element.id
     let count = user.get(accountId)?.count;
-    let lastCreated = user.get(accountId)?.lastCreated
+    let issues = user.get(accountId)?.issues;
+
     if (count == null) {
       count = 0;
     }
-    if (lastCreated == null) {
-      lastCreated = created
+
+    if (issues == null) {
+      issues = []
     }
+    let issue = { id: issueID, created: created, updated: updated };
+    issues.push(issue)
+    console.log("ISSSUEEE", issues)
 
-    // { count: count + 1, issueDate: data.issues[0].fields.created }
+    user.set(accountId, { count: count + 1, issues: issues })
 
-    // if (created > lastCreated) {
-    //   lastCreated = created;
-    //   console.log("condition", created, lastCreated)
-    // }
 
-    user.set(accountId, { count: count + 1, latestDate: lastCreated })
   });
 
   console.log(user)
