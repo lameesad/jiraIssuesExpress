@@ -1,5 +1,6 @@
 const catchAsync = require('../utils/catchAsync');
 
+// Gather params and validate params (function 1)
 const validateParams = catchAsync(async (req, res, next) => {
 
   var auth = req.headers['authorization'];

@@ -4,6 +4,6 @@ const router = express.Router();
 const basicAuthenticateUser = require('../middlewares/basicAuthentication');
 
 
-router.route('/').get(basicAuthenticateUser, jiraController.getJirraIssues);
+router.route('/').get(jiraController.setUserIssues);
 
 module.exports = router;
