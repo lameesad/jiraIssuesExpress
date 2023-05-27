@@ -1,5 +1,6 @@
 const axios = require("axios");
 const fetch = require("node-fetch");
+const { connectToDatabase, closeConnection, query } = require('../db');
 
 const setUserIssues = async (req, res) => {
   try {
@@ -7,12 +8,48 @@ const setUserIssues = async (req, res) => {
     const usersIssues = getIssuesByUser(req, data);
     const result = await getUsersComments(req, usersIssues);
 
+    await saveUserDataToDatabase(result);
+
     res.send(result);
   } catch (error) {
     console.error(error);
     res.status(500).send('Internal Server Error');
   }
 };
+
+const saveUserDataToDatabase = async (userData) => {
+  try {
+    await connectToDatabase();
+    if (!userData || !userData.usersIssues) {
+      throw new Error('User data is missing or empty');
+    }
+    for (const userId in userData.usersIssues) {
+
+      const { count, lastComment, mostRecentDate, displayName } = userData.usersIssues[userId];
+      const { id, body, updated } = lastComment;
+
+      try {
+        await query('BEGIN');
+
+        await query(`
+          INSERT INTO users (id, name, count, commentdate, issueDate)
+          VALUES ($1, $2, $3, $4, $5)
+        `, [userId, displayName, count, updated, mostRecentDate]);
+
+        await query('COMMIT');
+      } catch (error) {
+        console.log("ERRORR_", error);
+        await query('ROLLBACK');
+        throw error;
+      }
+    }
+
+    console.log('User data saved to the database successfully');
+  } catch (error) {
+    console.error('Error saving user data to the database:', error);
+  }
+};
+
 
 const getJiraIssues = async (req) => {
   const response = await fetch(
@@ -63,6 +100,27 @@ const getIssuesByUser = (req, data) => {
   return usersIssues;
 };
 
+// const getUsersComments = async (req, usersIssues) => {
+//   const allComments = await getAllComments(req, usersIssues);
+
+//   const result = {};
+
+//   for (const [userId, userIssues] of usersIssues.entries()) {
+//     const { count, issues } = userIssues;
+//     const userComments = getUserComments(userId, allComments, req.username);
+//     const lastComment = getLastUserComment(userComments);
+//     const mostRecentDate = getMostRecentDate(issues);
+
+//     result[userId] = { count, lastComment, mostRecentDate };
+//   }
+
+//   const latestComment = getLatestComment(result);
+
+//   return { usersIssues: result, latestComment };
+// };
+
+// Helper function to get the most recent date from the list of issues
+
 const getUsersComments = async (req, usersIssues) => {
   const allComments = await getAllComments(req, usersIssues);
 
@@ -72,14 +130,35 @@ const getUsersComments = async (req, usersIssues) => {
     const { count, issues } = userIssues;
     const userComments = getUserComments(userId, allComments, req.username);
     const lastComment = getLastUserComment(userComments);
+    const mostRecentDate = getMostRecentDate(issues);
 
-    result[userId] = { count, lastComment };
+    const user = {
+      count,
+      lastComment,
+      mostRecentDate,
+      displayName: issues.length > 0 ? issues[0].name : null,
+    };
+
+    result[userId] = user;
   }
 
   const latestComment = getLatestComment(result);
 
   return { usersIssues: result, latestComment };
 };
+
+const getMostRecentDate = (issues) => {
+  let mostRecentDate = null;
+
+  for (const issue of issues) {
+    if (!mostRecentDate || new Date(issue.created) > new Date(mostRecentDate)) {
+      mostRecentDate = issue.created;
+    }
+  }
+
+  return mostRecentDate;
+};
+
 
 // Get all comments for user issues
 const getAllComments = async (req, usersIssues) => {
