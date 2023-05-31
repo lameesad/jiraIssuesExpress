@@ -1,9 +1,15 @@
 const axios = require("axios");
 const fetch = require("node-fetch");
 const { connectToDatabase, closeConnection, query } = require('../db');
+// const moment = require('moment');
+const moment = require('moment-timezone');
+
+let client; // Declare a variable to store the database client
 
 const setUserIssues = async (req, res) => {
   try {
+    await connectToDatabase(); // Connect to the database
+
     const data = await getJiraIssues(req);
     const usersIssues = getIssuesByUser(req, data);
     const result = await getUsersComments(req, usersIssues);
@@ -14,46 +20,94 @@ const setUserIssues = async (req, res) => {
   } catch (error) {
     console.error(error);
     res.status(500).send('Internal Server Error');
+  } finally {
+    await closeConnection(); // Close the database connection
   }
 };
 
 const saveUserDataToDatabase = async (userData) => {
   try {
-    await connectToDatabase();
     if (!userData || !userData.usersIssues) {
       throw new Error('User data is missing or empty');
     }
-    for (const userId in userData.usersIssues) {
 
-      const { count, lastComment, mostRecentDate, displayName } = userData.usersIssues[userId];
+    await query('BEGIN');
+
+    const updateParams = [];
+
+    for (const userId in userData.usersIssues) {
+      const { count, lastComment, latestIssueDate, displayName } = userData.usersIssues[userId];
       const { id, body, updated } = lastComment;
 
-      try {
-        await query('BEGIN');
+      const updateUserQuery = `
+        INSERT INTO users (id, name, count, commentdate, issueDate, body)
+        VALUES ($1, $2, $3, $4, $5, $6)
+        ON CONFLICT (id) DO UPDATE
+        SET count = users.count + EXCLUDED.count,
+            commentdate = CASE WHEN EXCLUDED.commentdate IS NOT NULL THEN EXCLUDED.commentdate ELSE users.commentdate END,
+            issueDate = CASE WHEN EXCLUDED.issueDate IS NOT NULL THEN EXCLUDED.issueDate ELSE users.issueDate END,
+            body = CASE WHEN EXCLUDED.body IS NOT NULL THEN EXCLUDED.body ELSE users.body END
+      `;
 
-        await query(`
-          INSERT INTO users (id, name, count, commentdate, issueDate)
-          VALUES ($1, $2, $3, $4, $5)
-        `, [userId, displayName, count, updated, mostRecentDate]);
-
-        await query('COMMIT');
-      } catch (error) {
-        console.log("ERRORR_", error);
-        await query('ROLLBACK');
-        throw error;
-      }
+      updateParams.push(userId, displayName, count, updated, latestIssueDate, body);
+      await query(updateUserQuery, updateParams);
+      updateParams.length = 0; // Clear the array for the next iteration
     }
 
+    await query('COMMIT');
     console.log('User data saved to the database successfully');
   } catch (error) {
     console.error('Error saving user data to the database:', error);
+    await query('ROLLBACK');
   }
 };
 
 
+const getMaxIssueDate = async () => {
+  if (!client) {
+    client = await connectToDatabase(); // Connect to the database if the client is not already connected
+  }
+
+  // Assuming your database timezone is '+04:00'
+  const result = await query('SELECT MAX(issuedate) AS maxdate, MAX(commentdate) AS maxupdate FROM users;');
+  const dbDateTime = result[0].maxdate;
+  const dbUpdateTime = result[0].maxupdate;
+  // Specify the desired timezone for parsing
+
+  if (!dbDateTime || !dbUpdateTime) {
+    // Return default values or handle the case where data is missing
+    return null
+  }
+  const parsedDateTime = moment.tz(dbDateTime, 'YYYY-MM-DD HH:mm:ss.SSSZ', 'Asia/Dubai');
+  const parsedUpdateTime = moment.tz(dbUpdateTime, 'YYYY-MM-DD HH:mm:ss.SSSZ', 'Asia/Dubai');
+
+  console.log("Parsed date:", parsedDateTime.format('YYYY-MM-DD HH:mm'));
+  console.log("Parsed_______", parsedUpdateTime)
+  return {
+    maxdate: parsedDateTime,
+    maxupdate: parsedUpdateTime
+  };
+};
+const formatJiraDate = (date) => {
+  return moment(date).format('YYYY-MM-DD HH:mm');
+};
+
 const getJiraIssues = async (req) => {
+  const { project } = req.query;
+  const maxDate = await getMaxIssueDate();
+
+
+  let jql = '';
+
+
+  if (maxDate) {
+    const formattedDate = formatJiraDate(maxDate.maxdate);
+    const formattedUpdate = formatJiraDate(maxDate.maxupdate);
+    jql += `project=${project} AND createdDate > "${formattedDate}" AND updatedDate > "${formattedUpdate}" `;
+  }
+  console.log("JQL__", jql)
   const response = await fetch(
-    `https://lamees.atlassian.net/rest/api/2/search${req.jql}`,
+    `https://lamees.atlassian.net/rest/api/2/search?jql=${jql}`,
     {
       method: 'GET',
       headers: {
@@ -61,13 +115,17 @@ const getJiraIssues = async (req) => {
       },
     }
   );
-
   if (response.status === 200) {
-    return await response.json();
+    const responseBody = await response.text();
+    const responseObject = JSON.parse(responseBody);
+    return responseObject;
   } else {
     throw new Error('Incorrect JQL filters');
   }
 };
+
+
+
 
 const getIssuesByUser = (req, data) => {
   const usersIssues = new Map();
@@ -100,27 +158,6 @@ const getIssuesByUser = (req, data) => {
   return usersIssues;
 };
 
-// const getUsersComments = async (req, usersIssues) => {
-//   const allComments = await getAllComments(req, usersIssues);
-
-//   const result = {};
-
-//   for (const [userId, userIssues] of usersIssues.entries()) {
-//     const { count, issues } = userIssues;
-//     const userComments = getUserComments(userId, allComments, req.username);
-//     const lastComment = getLastUserComment(userComments);
-//     const mostRecentDate = getMostRecentDate(issues);
-
-//     result[userId] = { count, lastComment, mostRecentDate };
-//   }
-
-//   const latestComment = getLatestComment(result);
-
-//   return { usersIssues: result, latestComment };
-// };
-
-// Helper function to get the most recent date from the list of issues
-
 const getUsersComments = async (req, usersIssues) => {
   const allComments = await getAllComments(req, usersIssues);
 
@@ -130,12 +167,12 @@ const getUsersComments = async (req, usersIssues) => {
     const { count, issues } = userIssues;
     const userComments = getUserComments(userId, allComments, req.username);
     const lastComment = getLastUserComment(userComments);
-    const mostRecentDate = getMostRecentDate(issues);
+    const latestIssueDate = getlatestIssueDate(issues);
 
     const user = {
       count,
       lastComment,
-      mostRecentDate,
+      latestIssueDate,
       displayName: issues.length > 0 ? issues[0].name : null,
     };
 
@@ -147,16 +184,16 @@ const getUsersComments = async (req, usersIssues) => {
   return { usersIssues: result, latestComment };
 };
 
-const getMostRecentDate = (issues) => {
-  let mostRecentDate = null;
+const getlatestIssueDate = (issues) => {
+  let latestIssueDate = null;
 
   for (const issue of issues) {
-    if (!mostRecentDate || new Date(issue.created) > new Date(mostRecentDate)) {
-      mostRecentDate = issue.created;
+    if (!latestIssueDate || new Date(issue.created) > new Date(latestIssueDate)) {
+      latestIssueDate = issue.created;
     }
   }
 
-  return mostRecentDate;
+  return latestIssueDate;
 };
 
 

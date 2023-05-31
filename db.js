@@ -1,18 +1,21 @@
 const { Client } = require('pg');
 const dotenv = require('dotenv').config({ path: __dirname + '/.env' });
 
-const client = new Client({
-    user: process.env.DB_USER,
-    host: process.env.DB_HOST,
-    database: process.env.DB_NAME,
-    password: process.env.DB_PASSWORD,
-    port: process.env.DB_PORT,
-});
+let client;
 
 const connectToDatabase = async () => {
     try {
-        await client.connect();
-        console.log('Connected to the database');
+        if (!client) {
+            client = new Client({
+                user: process.env.DB_USER,
+                host: process.env.DB_HOST,
+                database: process.env.DB_NAME,
+                password: process.env.DB_PASSWORD,
+                port: process.env.DB_PORT,
+            });
+            await client.connect();
+            console.log('Connected to the database');
+        }
     } catch (error) {
         console.error('Error connecting to the database', error);
     }
@@ -20,8 +23,11 @@ const connectToDatabase = async () => {
 
 const closeConnection = async () => {
     try {
-        await client.end();
-        console.log('Connection closed');
+        if (client) {
+            await client.end();
+            client = null;
+            console.log('Connection closed');
+        }
     } catch (error) {
         console.error('Error closing the database connection', error);
     }
@@ -29,6 +35,10 @@ const closeConnection = async () => {
 
 const query = async (text, values) => {
     try {
+        if (!client) {
+            throw new Error('Database client is not connected');
+        }
+
         const result = await client.query(text, values);
         return result.rows;
     } catch (error) {
