@@ -85,7 +85,9 @@ const getMaxIssueDate = async () => {
   console.log("Parsed_______", parsedUpdateTime)
   return {
     maxdate: parsedDateTime,
-    maxupdate: parsedUpdateTime
+    maxupdate: parsedUpdateTime,
+    maxDateTime: dbDateTime,
+    maxUpdateTime: dbUpdateTime
   };
 };
 const formatJiraDate = (date) => {
@@ -118,6 +120,15 @@ const getJiraIssues = async (req) => {
   if (response.status === 200) {
     const responseBody = await response.text();
     const responseObject = JSON.parse(responseBody);
+    if (maxDate) {
+      const filteredIssues = responseObject.issues.filter((issue) => {
+        const createdDate = moment.tz(issue.fields.created, 'YYYY-MM-DD HH:mm:ss.SSSZ', 'Asia/Dubai');
+        const updatedDate = moment.tz(issue.fields.updated, 'YYYY-MM-DD HH:mm:ss.SSSZ', 'Asia/Dubai');
+        return createdDate.isAfter(maxDate.maxDateTime) && updatedDate.isAfter(maxDate.maxUpdateTime);
+      });
+      responseObject.issues = filteredIssues;
+    }
+
     return responseObject;
   } else {
     throw new Error('Incorrect JQL filters');
@@ -133,7 +144,7 @@ const getIssuesByUser = (req, data) => {
   if (!data || !data.issues) {
     throw new Error('No data found');
   }
-
+  console.log("data_____________", data.issues)
   data.issues.forEach((element) => {
     const issueElement = element.fields;
 
